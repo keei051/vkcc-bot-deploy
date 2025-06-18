@@ -10,28 +10,22 @@ import os
 import datetime
 import logging
 
-# --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO)
 
-# --- Токены бота ---
 BOT_TOKEN = '7952321153:AAF9oYx8Ov1NgiNe60Y45XZvd-LCiLKMeiM'
 VK_TOKEN = 'vk1.a.YYelfvUsKQLa9i0oWHXluyrTMc8beeHxuPJAbqUe4ZrWtjOiVLGRX_I7q7sH3pvtJeTcjIa92RZPNn_Chdw9dGzp7u97hwC2PpTCRpzEe8X81NLp1YpiTBdnnpOwT5KzimFepVlppJUC9cOK0G0lecAk8UebHY-LwxOCoDni0xqqnMaBTaRFb3-9IGOw5MnA'
 
-# --- Файл для хранения ссылок ---
 LINKS_FILE = 'links.json'
 
-# --- Инициализация ---
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# --- FSM состояния ---
 class LinkForm(StatesGroup):
     waiting_for_link  = State()
     waiting_for_title = State()
     renaming_link     = State()
 
-# --- Клавиатуры ---
 main_menu = InlineKeyboardMarkup(row_width=2)
 main_menu.add(
     InlineKeyboardButton('➕ Добавить ссылку', callback_data='add_link'),
@@ -56,12 +50,15 @@ def link_menu(key: str) -> InlineKeyboardMarkup:
     )
     return kb
 
-# --- Файловые утилиты ---
 def load_links() -> dict:
     if not os.path.exists(LINKS_FILE):
         return {}
     with open(LINKS_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            logging.error("Ошибка чтения links.json — файл повреждён или пустой")
+            return {}
 
 def save_links(data: dict) -> None:
     with open(LINKS_FILE, 'w', encoding='utf-8') as f:
@@ -69,9 +66,16 @@ def save_links(data: dict) -> None:
 
 def filter_links_by_date(links: list, days: int = 7) -> list:
     cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
-    return [l for l in links if 'created' in l and datetime.datetime.fromisoformat(l['created']) >= cutoff]
+    filtered = []
+    for l in links:
+        try:
+            created_date = datetime.datetime.fromisoformat(l['created'])
+            if created_date >= cutoff:
+                filtered.append(l)
+        except Exception as e:
+            logging.error(f"Ошибка при фильтрации даты ссылки: {e}")
+    return filtered
 
-# --- Хендлеры ---
 @dp.message_handler(commands=['start', 'help'])
 async def on_start(message: types.Message):
     await message.answer(
@@ -101,7 +105,7 @@ async def on_process_links(message: types.Message, state: FSMContext):
     uid = str(message.from_user.id)
     store = load_links()
     user_links = store.get(uid, [])
-    old_keys = {l['original'] for l in user_links}
+    old_urls = {l['original'] for l in user_links}
 
     urls = [u.strip() for u in message.text.splitlines() if u.strip()]
     if not urls or len(urls) > 15:
@@ -109,22 +113,32 @@ async def on_process_links(message: types.Message, state: FSMContext):
         return
 
     shortened, failed, duplicated = [], [], []
+
     async with aiohttp.ClientSession() as session:
         for url in urls:
-            if url in old_keys:
+            if url in old_urls:
                 duplicated.append(url)
                 continue
             if not url.startswith('https://'):
                 failed.append(url)
                 continue
             params = {'access_token': VK_TOKEN, 'v': '5.199', 'url': url}
-            async with session.get('https://api.vk.com/method/utils.getShortLink', params=params) as resp:
-                data = await resp.json()
-                resp_data = data.get('response')
-                if resp_data:
-                    shortened.append((resp_data['key'], resp_data['short_url'], url))
-                else:
-                    failed.append(url)
+            try:
+                async with session.get('https://api.vk.com/method/utils.getShortLink', params=params) as resp:
+                    data = await resp.json()
+                    logging.info(f"VK API ответ на utils.getShortLink: {data}")
+                    if 'error' in data:
+                        failed.append(url)
+                        logging.error(f"Ошибка VK API при сокращении ссылки {url}: {data['error']}")
+                        continue
+                    resp_data = data.get('response')
+                    if resp_data:
+                        shortened.append((resp_data['key'], resp_data['short_url'], url))
+                    else:
+                        failed.append(url)
+            except Exception as e:
+                logging.error(f"Ошибка при запросе VK API: {e}")
+                failed.append(url)
 
     if not shortened:
         await message.reply('⚠️ Ничего не сократилось.', reply_markup=main_menu)
@@ -226,6 +240,7 @@ async def on_stat(call: CallbackQuery):
         params = {'access_token': VK_TOKEN, 'v': '5.199', 'key': key}
         async with session.get('https://api.vk.com/method/utils.getLinkStats', params=params) as resp:
             data = await resp.json()
+            logging.info(f"VK API stats response: {data}")
             stats = data.get('response', {}).get('stats', [])
             total = sum(item.get('views', 0) for item in stats)
             await call.message.answer(f'📊 Переходов: {total}')
@@ -261,6 +276,5 @@ async def on_renaming(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer('✅ Подпись обновлена.', reply_markup=main_menu)
 
-# --- Запуск бота ---
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
