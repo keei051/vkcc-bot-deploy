@@ -1,0 +1,7 @@
+{
+  "build": {
+    "env": {
+      "PIP_NO_BINARY": "aiohttp"
+    }
+  }
+}
