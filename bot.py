@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = '7952321153:AAF9oYx8Ov1NgiNe60Y45XZvd-LCiLKMeiM'
-VK_TOKEN = 'vk1.a.YYelfvUsKQLa9i0oWHXluyrTMc8beeHxuPJAbqUe4ZrWtjOiVLGRX_I7q7sH3pvtJeTcjIa92RZPNn_Chdw9dGzp7u97hwC2PpTCRpzEe8X81NLp1YpiTBdnnpOwT5KzimFepVlppJUC9cOK0G0lecAk8UebHY-LwxOCoDni0xqqnMaBTaRFb3-9IGOw5MnA'
+VK_TOKEN = 'c26551e5c26551e5c26551e564c1513cc2cc265c26551e5aa37c66a6a6d8f7092ca2102'
 
 LINKS_FILE = 'links.json'
 
