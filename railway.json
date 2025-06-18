@@ -1,0 +1,8 @@
+{
+  "build": {
+    "env": {
+      "PIP_NO_BUILD_ISOLATION": "false",
+      "PIP_ONLY_BINARY": "aiohttp"
+    }
+  }
+}
