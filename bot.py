@@ -188,54 +188,28 @@ async def on_set_title(message: types.Message, state: FSMContext):
     )
     await message.answer('✅ Название сохранено. Что дальше?', reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data == 'my_links')
-async def on_show_links(call: CallbackQuery):
-    uid = str(call.from_user.id)
-    recent = filter_links_by_date(load_links().get(uid, []), 7)
-    if not recent:
-        await call.message.edit_text('⚠️ Нет ссылок за последние 7 дней.', reply_markup=main_menu)
-        return
-
-    kb = InlineKeyboardMarkup(row_width=1)
-    for l in recent:
-        text = l.get('title') or l['short']
-        kb.add(InlineKeyboardButton(text=text[:40], callback_data=f'link_{l["key"]}'))
-    kb.add(InlineKeyboardButton('🏠 Главное меню', callback_data='main_menu'))
-    await call.message.edit_text('🔗 Твои ссылки за 7 дней:', reply_markup=kb)
-
-@dp.callback_query_handler(lambda c: c.data == 'show_all_links')
-async def on_all_links(call: CallbackQuery):
-    uid = str(call.from_user.id)
-    all_links = load_links().get(uid, [])
-    if not all_links:
-        await call.message.edit_text('❗️У вас пока нет сохранённых ссылок.', reply_markup=main_menu)
-        return
-    kb = InlineKeyboardMarkup(row_width=1)
-    for l in all_links:
-        text = l.get('title') or l['short']
-        kb.add(InlineKeyboardButton(text=text[:40], callback_data=f'link_{l["key"]}'))
-    kb.add(InlineKeyboardButton('🏠 Главное меню', callback_data='main_menu'))
-    await call.message.edit_text('📋 Все ваши ссылки:', reply_markup=kb)
-
-@dp.callback_query_handler(lambda c: c.data.startswith('link_'))
-async def on_link_options(call: CallbackQuery):
-    key = call.data.split('_', 1)[1]
-    uid = str(call.from_user.id)
-    link = next((x for x in load_links().get(uid, []) if x['key'] == key), None)
-    if not link:
-        await call.answer('Ссылка не найдена.', show_alert=True)
-        return
-    detail = (
-        f"📝 {link.get('title','') or 'Без названия'}\n"
-        f"🔗 {link['short']}\n"
-        f"⏳ {link['created'][:19]}\n"
-        f"{link['original']}"
-    )
-    await call.message.edit_text(detail, reply_markup=link_menu(key))
-
 @dp.callback_query_handler(lambda c: c.data.startswith('stat_'))
-async def on_stat(call: CallbackQuery):
+async def on_stat(call: CallbackQuery, state: FSMContext):
     key = call.data.split('_', 1)[1]
+    uid = str(call.from_user.id)
+    links = load_links().get(uid, [])
+    link = next((l for l in links if l["key"] == key), None)
+
+    if not link:
+        await call.answer("Ссылка не найдена.", show_alert=True)
+        return
+
+    try:
+        await call.message.delete()
+    except:
+        pass
+
+    msg = await bot.send_message(
+        call.from_user.id,
+        f"⏳ Получаю статистику для: <b>{link.get('title') or link['short']}</b>",
+        parse_mode="HTML"
+    )
+
     async with aiohttp.ClientSession() as session:
         params = {'access_token': VK_TOKEN, 'v': '5.199', 'key': key}
         async with session.get('https://api.vk.com/method/utils.getLinkStats', params=params) as resp:
@@ -243,8 +217,19 @@ async def on_stat(call: CallbackQuery):
             logging.info(f"VK API stats response: {data}")
             stats = data.get('response', {}).get('stats', [])
             total = sum(item.get('views', 0) for item in stats)
-            await call.message.answer(f'📊 Переходов: {total}')
-    await call.answer("Показана статистика")
+
+            await msg.edit_text(
+                f"📊 <b>Статистика ссылки:</b>\n"
+                f"🔗 <b>{link.get('title') or link['short']}</b>\n"
+                f"👁 Всего переходов: <b>{total}</b>",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(row_width=1).add(
+                    InlineKeyboardButton("⬅️ Назад к ссылке", callback_data=f"link_{key}"),
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
+                )
+            )
+
+    await call.answer("Статистика обновлена.")
 
 @dp.callback_query_handler(lambda c: c.data.startswith('del_'))
 async def on_delete(call: CallbackQuery):
@@ -275,6 +260,51 @@ async def on_renaming(message: types.Message, state: FSMContext):
     save_links(data)
     await state.finish()
     await message.answer('✅ Подпись обновлена.', reply_markup=main_menu)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('link_'))
+async def on_link_options(call: CallbackQuery):
+    key = call.data.split('_', 1)[1]
+    uid = str(call.from_user.id)
+    link = next((x for x in load_links().get(uid, []) if x['key'] == key), None)
+    if not link:
+        await call.answer('Ссылка не найдена.', show_alert=True)
+        return
+    detail = (
+        f"📝 {link.get('title','') or 'Без названия'}\n"
+        f"🔗 {link['short']}\n"
+        f"⏳ {link['created'][:19]}\n"
+        f"{link['original']}"
+    )
+    await call.message.edit_text(detail, reply_markup=link_menu(key))
+
+@dp.callback_query_handler(lambda c: c.data == 'my_links')
+async def on_show_links(call: CallbackQuery):
+    uid = str(call.from_user.id)
+    recent = filter_links_by_date(load_links().get(uid, []), 7)
+    if not recent:
+        await call.message.edit_text('⚠️ Нет ссылок за последние 7 дней.', reply_markup=main_menu)
+        return
+
+    kb = InlineKeyboardMarkup(row_width=1)
+    for l in recent:
+        text = l.get('title') or l['short']
+        kb.add(InlineKeyboardButton(text=text[:40], callback_data=f'link_{l["key"]}'))
+    kb.add(InlineKeyboardButton('🏠 Главное меню', callback_data='main_menu'))
+    await call.message.edit_text('🔗 Твои ссылки за 7 дней:', reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data == 'show_all_links')
+async def on_all_links(call: CallbackQuery):
+    uid = str(call.from_user.id)
+    all_links = load_links().get(uid, [])
+    if not all_links:
+        await call.message.edit_text('❗️У вас пока нет сохранённых ссылок.', reply_markup=main_menu)
+        return
+    kb = InlineKeyboardMarkup(row_width=1)
+    for l in all_links:
+        text = l.get('title') or l['short']
+        kb.add(InlineKeyboardButton(text=text[:40], callback_data=f'link_{l["key"]}'))
+    kb.add(InlineKeyboardButton('🏠 Главное меню', callback_data='main_menu'))
+    await call.message.edit_text('📋 Все ваши ссылки:', reply_markup=kb)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
